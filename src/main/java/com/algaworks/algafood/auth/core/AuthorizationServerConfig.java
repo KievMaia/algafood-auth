@@ -1,10 +1,12 @@
-package com.algaworks.algafood.auth;
+package com.algaworks.algafood.auth.core;
 
 import java.util.Arrays;
 
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.data.redis.connection.RedisConnectionFactory;
+import org.springframework.core.env.Environment;
+import org.springframework.core.io.ClassPathResource;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.core.userdetails.UserDetailsService;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -15,8 +17,12 @@ import org.springframework.security.oauth2.config.annotation.web.configurers.Aut
 import org.springframework.security.oauth2.config.annotation.web.configurers.AuthorizationServerSecurityConfigurer;
 import org.springframework.security.oauth2.provider.CompositeTokenGranter;
 import org.springframework.security.oauth2.provider.TokenGranter;
+import org.springframework.security.oauth2.provider.approval.ApprovalStore;
+import org.springframework.security.oauth2.provider.approval.TokenApprovalStore;
+import org.springframework.security.oauth2.provider.token.TokenEnhancerChain;
 import org.springframework.security.oauth2.provider.token.TokenStore;
-import org.springframework.security.oauth2.provider.token.store.redis.RedisTokenStore;
+import org.springframework.security.oauth2.provider.token.store.JwtAccessTokenConverter;
+import org.springframework.security.oauth2.provider.token.store.KeyStoreKeyFactory;
 
 @Configuration
 @EnableAuthorizationServer
@@ -32,7 +38,10 @@ public class AuthorizationServerConfig extends AuthorizationServerConfigurerAdap
 	private UserDetailsService userDetailsService;
 	
 	@Autowired
-	private RedisConnectionFactory redisConnectionFactory;
+	private Environment environment;
+
+//	@Autowired
+//	private RedisConnectionFactory redisConnectionFactory;
 	
 	@Override
 	public void configure(ClientDetailsServiceConfigurer clients) throws Exception {
@@ -74,21 +83,53 @@ public class AuthorizationServerConfig extends AuthorizationServerConfigurerAdap
 		security
 //			.checkTokenAccess("isAuthenticated()");
 			.checkTokenAccess("permitAll()")
+			.tokenKeyAccess("permitAll()")
 			.allowFormAuthenticationForClients();
 	}
 	
 	@Override
 	public void configure(AuthorizationServerEndpointsConfigurer endpoints) throws Exception {
+		var enhancerChain = new TokenEnhancerChain();
+		enhancerChain.setTokenEnhancers(
+				Arrays.asList(new JwtCustomClaimsTokenEnhancer(), jwtAccessTokenConverter()));
+		
 		endpoints
 			.authenticationManager(authenticationManager)
 			.userDetailsService(userDetailsService)
 			.reuseRefreshTokens(false)
-			.tokenStore(redisTokenStrore())
+			.accessTokenConverter(jwtAccessTokenConverter())
+			.tokenEnhancer(enhancerChain)
+			.approvalStore(approvalStore(endpoints.getTokenStore()))
+//			.tokenStore(redisTokenStrore())
 			.tokenGranter(tokenGranter(endpoints));
 	}
 	
-	private TokenStore redisTokenStrore() {
-		return new RedisTokenStore(redisConnectionFactory);
+	private ApprovalStore approvalStore(TokenStore tokenStore) {
+		var approvalStore = new TokenApprovalStore();
+		approvalStore.setTokenStore(tokenStore);
+		
+		return approvalStore;
+	}
+	
+//	private TokenStore redisTokenStrore() {
+//		return new RedisTokenStore(redisConnectionFactory);
+//	}
+	
+	@Bean
+	public JwtAccessTokenConverter jwtAccessTokenConverter() {
+		var jwtAccessTokenConverter = new JwtAccessTokenConverter();
+//		jwtAccessTokenConverter.setSigningKey("hfd792hf92g732gf379fg3729gf927f32h79");
+		
+		var jksResource = new ClassPathResource(environment.getProperty("algafood.jwt.keystore.path"));
+		var keyStorePass = environment.getProperty("algafood.jwt.keystore.password");
+		var keyPairAlias = environment.getProperty("algafood.jwt.keystore.keypair-alias");
+		
+		var keyStoreKeyFactory = new KeyStoreKeyFactory(jksResource,keyStorePass.toCharArray());
+		var keyPair = keyStoreKeyFactory.getKeyPair(keyPairAlias);
+		
+		jwtAccessTokenConverter.setKeyPair(keyPair);
+		
+		return jwtAccessTokenConverter;
 	}
 	
 	private TokenGranter tokenGranter(AuthorizationServerEndpointsConfigurer endpoints) {
